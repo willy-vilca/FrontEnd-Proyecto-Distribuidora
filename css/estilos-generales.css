@@ -341,7 +341,6 @@
   pointer-events: auto;
 }
 
-/* Efecto hover */
 .btn-flotante:hover,
 .btn-volver-arriba:hover,
 .btn-flotante.carrito.show:hover {
