@@ -3,7 +3,12 @@ import cors from "cors";
 import pkg from "pg";
 import { LocalStorage } from 'node-localstorage';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import path from 'path';
+import { fileURLToPath } from 'url';
 const { Client } = pkg;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
@@ -110,32 +115,59 @@ app.post('/chat', async (req,res)=>{
           let iaPrompt = ``;
           let productos = [];
           let catalogoTexto = '';
+          // Variables para manejar búsqueda por palabra clave
+          let palabraClave = null;
+          let palabraClaveNoMatch = false;
           if (clientConnected && client) {
             const ultimaSolicitud = prompt;
             let resultado = null;
-            // === Interpretar intención del usuario con Gemini ===
-            userIntent = await interpretarIntencion(model, ultimaSolicitud);
-            console.log(`🎯 Intención detectada: ${userIntent}`);
-            if (userIntent !== "detalle") {
-            resultado = await verificarSiEsProducto(client,userIntent);
+
+            // === Priorizar búsqueda por palabra clave extraída ===
+            try {
+              palabraClave = await extraerPalabraClave(model, ultimaSolicitud);
+              console.log(`🔎 Palabra clave detectada: ${palabraClave}`);
+              if (palabraClave) {
+                const ver = await verificarSiEsProducto(client, palabraClave);
+                if (ver === palabraClave) {
+                  resultado = ver;
+                  userIntent = palabraClave;
+                  console.log(`🎯 Intención detectada por palabra clave: ${userIntent}`);
+                } else {
+                  // Marcamos que no se encontró producto exacto para la palabra clave
+                  palabraClaveNoMatch = true;
+                }
+              }
+            } catch (e) {
+              console.warn('⚠️ Falló extracción de palabra clave, continuando con interpretación:', e.message);
+            }
+
+            // Si no se encontró producto por palabra clave, usar interpretación completa
+            if (!resultado || resultado === 'No es producto') {
+              // === Interpretar intención del usuario con Gemini ===
+              userIntent = await interpretarIntencion(model, ultimaSolicitud);
+              console.log(`🎯 Intención detectada: ${userIntent}`);
+              if (userIntent !== "detalle" && userIntent !== "saludo" && userIntent !== "registro" && userIntent !== "pago" && userIntent !== "comprar" && userIntent !== "sugerir") {
+                resultado = await verificarSiEsProducto(client,userIntent);
+              }
             }
 
             //-------verifica si la intencion simplificada (palabra clave) es un producto existente en la base de datos
-              if (resultado === userIntent && userIntent !== "detalle" && resultado !== "detalle") {
+              if (resultado === userIntent && userIntent !== "detalle" && resultado !== "detalle" && userIntent !== "saludo" && userIntent !== "registro" && userIntent !== "pago" && userIntent !== "comprar") {
                   try {
                   const searchQuery =  `
                     SELECT 
+                      p.id_producto,
                       p.nombre, 
                       p.descripcion, 
                       p.precio,
+                      p.stock,
                       s.nombre AS subcategoria
                     FROM productos p
                     LEFT JOIN subcategoria s 
                       ON p.id_subcategoria = s.id_subcategoria
                     WHERE LOWER(p.nombre) LIKE LOWER($1)
                       OR LOWER(p.descripcion) LIKE LOWER($1)
-                      OR LOWER(s.nombre) LIKE LOWER($1)
-                    LIMIT 5;
+                      OR LOWER(s.nombre) LIKE LOWER($1);
                   `;
                   const userSearch = `%${resultado}%`;
                   const dbResult = await client.query(searchQuery, [userSearch]);
@@ -149,45 +181,38 @@ app.post('/chat', async (req,res)=>{
 
                 // === Formatear los productos ===
                 catalogoTexto = productos.length > 0
-                  ? productos.map(p => `• ${p.nombre} – ${p.descripcion} – ${p.subcategoria} (S/ ${p.precio})`).join('\n')
+                  ? productos.map(p => `• ${p.nombre} – ${p.descripcion} – ${p.stock} – ${p.subcategoria} (S/ ${p.precio})`).join('\n')
                   : 'No se encontraron coincidencias exactas en el catálogo actual.';
 
 
-                // === Construir el prompt dinámico según la intención ===
-                let instruccionesIA = `
-                    Eres un vendedor virtual de una **distribuidora de productos variados** 🛒. 
-                    Ofreces artículos como electrónicos, productos de limpieza, utensilios de cocina,
-                    accesorios de belleza, juguetes, artículos de papelería, peluches y más.
-                    Tu misión es inspirar confianza y motivar al cliente a comprar.
-                `;
-                if(userIntent===resultado){
-                  instruccionesIA +=`Usa estos productos para ayudar al usuario en escoger uno destaca lo mejor de cada uno y ayudalo a elegir recuerda que nuestra idea es vender y atraer clientes recurrentes , solo muestra utiliza el nombre tal cual como es y el precio porfavor`;
-                }
+
               
 
                 // === Armar prompt completo ===
                 iaPrompt = `
-                  ${instruccionesIA}
-
-
+                  Eres un chatbot, muestra un listado de productos basado en la siguiente solicitud del cliente.
+                  Luego muestra una lista con los productos relacionados que tienes en el catálogo.
+                  Se amigable y visualmente atractivo.
+                  Usa emojis para hacerlo más atractivo y amigable se lo mas amigable posible.
                   Mensaje actual del cliente: "${prompt}"
-                  
-                  Productos relacionados en catálogo:
+                  Productos relacionados disponibles en el catálogo:
                   ${catalogoTexto}
+                  Utiliza el nombre tal cual y el precio de cada producto.
+                  No digas nada adicional solo enumera de la siguiente manera
 
-                  Reglas:
-                  - No inventes productos que no estén en la distribuidora.
-                  - Escribe los productos tal cual escritos como se te estan dando
-                  - Si no hay coincidencias, sugiere productos similares o complementarios.
-                  - Usa un tono amable y motivador con emojis.
-                  - Finaliza con una pregunta o invitación a seguir explorando.
-                  - Solo utilza el nombre exactamente igual del producto y su precio 
+                  1. Nombre del producto – S/ precio
+                  2. Nombre del producto – S/ precio
+                  3. Nombre del producto – S/ precio
+                  
+                  SOLO EL NOMBRE DEL PRODUCTO Y SU PRECIO NADA MAS, NO DESCRIPCION NI NADA EXTRA
+
+                  ¿Cuál de estos productos te interesa o deseas más detalles sobre alguno en particular?
 
                 `;
                 
                 }
               
-                if(userIntent == "detalle" || userIntent == "comprar" ){
+                if(userIntent == "detalle" || userIntent == "comprar" && userIntent !== "saludo" && userIntent !== "registro" && userIntent !== "pago"){
                   // Obtener el último mensaje del asistente
                   const historial = chatHistory[userKey];
                   const ultimoMensajeIAObj = [...historial].reverse().find(msg => msg.role === 'assistant');
@@ -214,7 +239,7 @@ app.post('/chat', async (req,res)=>{
                 }
               } 
 
-              if(userIntent === "sugerir" || resultado == "No es producto" && userIntent !== "saludo"){
+              if(userIntent === "sugerir" || resultado == "No es producto" && userIntent !== "saludo"&& userIntent !== "registro" && userIntent !== "pago" && userIntent !== "comprar"){
                   // Obtener el último mensaje del usuario
                   const mensajeGracioso = await sugerirProducto(model, client, prompt);
                   // === Actualizar memoria ===
@@ -236,7 +261,15 @@ app.post('/chat', async (req,res)=>{
               if(userIntent=="saludo"){
                 return res.json({ answer: "¡Hola! 👋 Soy tu asistente de compras 😊. Dime qué producto buscas o para qué lo necesitas y te mostraré las mejores opciones.", intent: userIntent });
               }
+              if(userIntent=="registro"){
+                const link2 = `https://willy-vilca.github.io/FrontEnd-Proyecto-Distribuidora/registro.html`;
+                return res.json({ answer: `Si quieres registrarte en la página, solo haz clic en este enlace y completa tus datos. ¡Es rapidísimo! 😊\n${link2}`, intent: userIntent });
+              }
 
+              if(userIntent=="pago" || userIntent=="comprar"){
+                const link3 = `https://willy-vilca.github.io/FrontEnd-Proyecto-Distribuidora/finalizarPedido.html`;
+                return res.json({ answer: `¡Perfecto! Para confirmar tu pedido solo haz clic en el siguiente enlace y finaliza el proceso. 🚀\n${link3}\n<strong>⚠️ Recuerda que la compra mínima es de S/.100!</strong>`, intent: userIntent });
+              }
           }
 
 
@@ -254,6 +287,13 @@ app.post('/chat', async (req,res)=>{
 
               aiText = aiText.replace(/\[.*?\]/g, "").trim();
 
+              // Si inicialmente buscamos por palabra clave y no se encontró
+              // un producto exacto, pero después hallamos productos relacionados,
+              // avisamos al usuario según lo solicitado.
+              if (palabraClaveNoMatch && productos && productos.length > 0) {
+                aiText = `No se encontró el producto específico para "${palabraClave}", pero encontramos productos relacionados en el listado:\n\n` + aiText;
+              }
+
               // === Actualizar memoria ===
               aiText = aiText || "No pude procesar tu solicitud.";
               chatHistory[userKey].push({ role: 'user', text: prompt });
@@ -263,7 +303,20 @@ app.post('/chat', async (req,res)=>{
               }
 
               // === Enviar respuesta final ===
-              return res.json({ answer: aiText, intent: userIntent });
+              // Si tenemos productos provenientes de la búsqueda en BD, inclúyelos de forma estructurada
+              let responseProducts = undefined;
+              if (productos && productos.length) {
+                responseProducts = productos.map(p => ({
+                  id: p.id_producto || null,
+                  nombre: p.nombre,
+                  descripcion: p.descripcion,
+                  precio: p.precio,
+                  stock: typeof p.stock !== 'undefined' ? Number(p.stock) : null,
+                  subcategoria: p.subcategoria || null
+                }));
+              }
+
+              return res.json({ answer: aiText, intent: userIntent, products: responseProducts });
 
             } catch (err) {
               console.error("💥 Error al generar sugerencia inteligente:", err);
@@ -411,10 +464,56 @@ app.post('/chat', async (req,res)=>{
         Baldes
         Relojes
         Organizadores
+        Estos son las subcategorias disponibles en el catálogo, si el cliente menciona alguna de estas palabras responde exactamente con esa palabra.
+
+          Auriculares
+          Accesorios de Cocina
+          Cables
+          Cargadores/Adaptadores
+          Otros
+          Ollas y Sartenes
+          Vasos y Tazas
+          Platos
+          Repostería
+          Maquillaje
+          Peines y Cepillos
+          Cremas Corporales
+          Accesorios Higiénicos
+          Colonias
+          Zapatos
+          Zapatillas Deportivas
+          Zapatillas Casuales
+          Pilas
+          Teclados/Mouse
+          Parlantes
+          Herramientas
+          Candados
+          Infladores
+          Conservas
+          Lácteos
+          Refrigerados
+          Decoración
+          Floreros
+          Macetas
+          Pelotas
+          Peluches
+          Rompecabezas
+          Adhesivos
+          Carpetas
+          Cuadernos
+          Accesorios de baño
+          Artículos de limpieza
+          Baldes
+          Relojes
+          Organizadores
+          Alfombras
+
 
         Recuerda:
         Si el cliente dice algo en especifico como quiero comprar un producto X responde extamente ese producto X
         Si el cliente dice algo como dame el primero, el segundo, el mas barato o el premium responde detalle solamente con la palabra "detalle"
+        SI el cliente dice algo referente a como registrarse en la pagina o sobre registro -> responde "registro"
+        Si el cliente dice algo referente a pagar o comprar o terminar de completar el proceso de pago -> responde "pago" o "comprar"
         No des contexto, ni explicación. Solo responde con la palabra más representativa.
 
         Mensaje del usuario: "${mensajeUsuario}"
@@ -458,8 +557,7 @@ app.post('/chat', async (req,res)=>{
           ON p.id_subcategoria = s.id_subcategoria
         WHERE LOWER(p.nombre) LIKE LOWER($1)
           OR LOWER(p.descripcion) LIKE LOWER($1)
-          OR LOWER(s.nombre) LIKE LOWER($1)
-        LIMIT 5;
+          OR LOWER(s.nombre) LIKE LOWER($1);
       `;
 
       const result = await client.query(query, [`%${texto.toLowerCase()}%`]);
@@ -631,65 +729,209 @@ app.post('/chat', async (req,res)=>{
 //  Método para responder con humor usando un producto aleatorio de la base de datos
 async function sugerirProducto(model, client, mensajeCliente) {
   try {
-    // 1️⃣ Elegir un producto aleatorio
-    const query = `
-      SELECT nombre, precio 
-      FROM productos
-      ORDER BY RANDOM()
-      LIMIT 1;
-    `;
-    const result = await client.query(query);
+    // Intentar encontrar producto relacionado por palabra clave extraída
+    let producto = null;
+    let relatedFound = false;
 
-    if (result.rows.length === 0) {
-      console.log("⚠️ No hay productos en la base de datos.");
-      return "Parece que hoy me quedé sin inventario para hacer chistes 😅";
+    if (client && client._connected) {
+      try {
+        const palabra = await extraerPalabraClave(model, mensajeCliente);
+        if (palabra) {
+          const queryRel = `
+            SELECT id_producto, nombre, descripcion, precio
+            FROM productos
+            WHERE LOWER(nombre) LIKE LOWER($1)
+              OR LOWER(descripcion) LIKE LOWER($1)
+            LIMIT 1;
+          `;
+          const resRel = await client.query(queryRel, [`%${palabra}%`]);
+          if (resRel.rows.length > 0) {
+            producto = resRel.rows[0];
+            relatedFound = true;
+            console.log(`🔎 Producto relacionado encontrado para "${palabra}": ${producto.nombre}`);
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ Error buscando producto relacionado:', e.message);
+      }
     }
 
-    const producto = result.rows[0];
-    console.log(`🎲 Producto aleatorio seleccionado: ${producto.nombre}`);
+    // Si no hay producto relacionado, elegir uno aleatorio (sugerencia general)
+    if (!producto) {
+      if (!client || !client._connected) {
+        console.warn('⚠️ Cliente de base de datos no conectado, no puedo seleccionar producto.');
+        return 'Lo siento, no puedo acceder al catálogo ahora mismo para hacer una sugerencia.';
+      }
+      const query = `
+        SELECT id_producto, nombre, descripcion, precio
+        FROM productos
+        ORDER BY RANDOM()
+        LIMIT 1;
+      `;
+      const result = await client.query(query);
+      if (result.rows.length === 0) {
+        console.log("⚠️ No hay productos en la base de datos.");
+        return "Lo siento, no tengo productos para recomendar en este momento.";
+      }
+      producto = result.rows[0];
+      console.log(`🎲 Producto aleatorio seleccionado: ${producto.nombre}`);
+    }
 
-    // 2️⃣ Construir prompt humorístico
-    const promptHumor = `
-      Eres un asistente de ventas divertido y carismático 😄.
-      El usuario acaba de enviar un mensaje que **no tiene que ver con comprar o recomendar productos**.
+    // Construir URL de imagen y link de compra
+    const baseImg = "https://backend-proyecto-distribuidora-production.up.railway.app/images/productos/";
+    const encodedName = encodeURIComponent(producto.nombre.trim());
+    const imageUrl = `${baseImg}${encodedName}.jpg`;
+    const safeImage = producto.nombre && producto.nombre.length > 0 ? imageUrl : `${baseImg}default.jpg`;
+    const link = `https://willy-vilca.github.io/FrontEnd-Proyecto-Distribuidora/producto-info.html?id=${producto.id_producto}`;
 
-      Tu tarea:
-      - Responde de manera graciosa, amigable y breve (máx. 2 líneas).
-      - Haz una broma o comentario ingenioso usando el siguiente producto como parte del chiste:
-        👉 "${producto.nombre}"
-      - Incorpora el nombre del producto tal cual como se te esta brindando.
-      - No menciones precios ni detalles de venta.
-      - Evita respuestas secas o genéricas. Sé simpático, cercano y un poco pícaro si encaja bien.
-      - usa el nombre del producto tal cual como se te esta dando y ponlo entre asteriscos para resaltarlo
-      Mensaje del usuario:
-      "${mensajeCliente}"
-    `;
+    // Preparar prompt para generar un mensaje formal y persuasivo (sin bromas)
+    const promptRecom = relatedFound
+      ? `Eres un asistente de ventas formal y profesional y amable usa emojis. El usuario buscó: "${mensajeCliente}". Genera un mensaje breve 2 oraciones , educado y persuasivo, que explique por qué este producto es relevante y convide a verlo o comprarlo. No uses humor ni bromas. No inventes características adicionales.`
+      : `Eres un asistente de ventas formal y profesional y amable usa emojis . El usuario escribió algo no relacionado con la tienda: "${mensajeCliente}". Sugiere este producto de forma breve (2-3 oraciones), destacando por qué podría interesarle y animando a visitar el enlace. Mantén tono formal y profesional.`;
 
-    // 3️⃣ Enviar a la IA
-    const respuesta = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: promptHumor }] }],
-    });
+    // Incluir datos del producto en el prompt
+    const fullPrompt = `${promptRecom}\n\nProducto:\nNombre: ${producto.nombre}\nDescripcion: ${producto.descripcion || 'Sin descripción'}\nPrecio: S/ ${producto.precio}\nImagen: ${safeImage}\nLink: ${link}`;
 
-    const respuestaIA =
-      respuesta?.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
-      "😄 Ups, se me fue el chiste esta vez, ¡prometo mejorar!";
+    if (model) {
+      try {
+        const respuesta = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+        });
+        const textoIA = respuesta?.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (textoIA) {
+        return `No tengo exactamente ese producto, pero este podría interesarte 😊\n${safeImage}\n🛒 Ver producto: ${link}`;
+        }
 
-    console.log(`💬 Respuesta graciosa generada: ${respuestaIA}`);
+      } catch (e) {
+        console.warn('⚠️ Error generando texto con IA en sugerirProducto:', e.message);
+      }
+    }
 
-    // 4️⃣ Retornar el texto final
-    return respuestaIA;
+    // Fallback: construir mensaje localmente
+    return `No cuento con ese producto exacto, pero este podría interesarte 😊\n${safeImage}\n🛒 Ver producto: ${link}`;
+
 
   } catch (err) {
-    console.error("⚠️ Error en responderConHumor:", err.message);
-    return "😅 Algo salió mal con mi sentido del humor... intenta otra vez.";
+    console.error("⚠️ Error en sugerirProducto:", err.message);
+    return "Lo siento, ocurrió un error al generar la sugerencia. Intenta de nuevo.";
   }
 
 
 
 }
 
+// Obtener un producto completo por nombre (coincidencia parcial) desde la base de datos
+async function obtenerProductoPorNombre(client, nombre) {
+  try {
+    if (!client || !client._connected) {
+      console.warn('⚠️ Cliente de base de datos no conectado.');
+      return null;
+    }
+
+    if (!nombre || String(nombre).trim().length === 0) return null;
+
+    const query = `
+      SELECT id_producto, nombre, descripcion, precio, stock
+      FROM productos
+      WHERE LOWER(nombre) LIKE LOWER($1)
+      LIMIT 1;
+    `;
+
+    const search = `%${String(nombre).trim()}%`;
+    const result = await client.query(query, [search]);
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      id: row.id_producto,
+      nombre: row.nombre,
+      descripcion: row.descripcion,
+      precio: row.precio,
+      stock: typeof row.stock !== 'undefined' ? Number(row.stock) : null
+    };
+  } catch (err) {
+    console.error('⚠️ Error en obtenerProductoPorNombre:', err.message);
+    return null;
+  }
+}
+
+// Endpoint simple para obtener producto por nombre (consulta GET /product?name=...)
+app.get('/product', async (req, res) => {
+  try {
+    const { name } = req.query || {};
+    if (!name) return res.status(400).json({ error: 'Falta parámetro "name" en la consulta' });
+    if (!clientConnected || !client) return res.status(503).json({ error: 'Base de datos no disponible' });
+
+    const producto = await obtenerProductoPorNombre(client, name);
+    if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
+
+    // Devolver el objeto tal cual (contendrá columnas de la tabla productos)
+    return res.json({ product: producto });
+  } catch (err) {
+    console.error('Error en /product:', err.message);
+    return res.status(500).json({ error: 'Error interno al buscar producto' });
+  }
+});
 
 
+
+// Nuevo método: extraerPalabraClave
+// Devuelve UNA sola palabra que represente la palabra clave/producto principal del mensaje.
+async function extraerPalabraClave(model, mensajeUsuario) {
+  const prompt = `
+Analiza el siguiente mensaje y responde SOLO con UNA palabra que represente el producto
+o la palabra clave más importante mencionada por el usuario. Responde únicamente con
+esa palabra, sin explicaciones ni puntuación adicional.
+
+Ejemplos:
+- "quiero unos auriculares samsung" -> "auriculares samsung"
+- "quiero pollo para la cena" -> "pollo"
+- "tienen café?" -> "cafe"
+- "busco mariscos" -> "mariscos"
+Mensaje: "${mensajeUsuario}"
+`;
+
+  try {
+    // Si hay un modelo disponible, pedirle que extraiga la palabra clave
+    if (model) {
+      const respuesta = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      });
+
+      const palabra = respuesta?.response?.candidates?.[0]?.content?.parts?.[0]?.text
+        ?.trim()
+        ?.toLowerCase();
+
+      if (palabra) {
+        console.log(`🔎 Palabra clave extraída (IA): "${palabra}"`);
+        return palabra;
+      }
+    }
+
+    // Fallback heurístico simple: eliminar palabras vacías y devolver la primera significativa
+    const stopwords = [
+      'quiero','unos','un','una','para','el','la','los','las','con','de','del','por','que',
+      'me','tienes','algo','puedo','puede','necesito','busco','tengo','tener','hay','donde',
+      'como','yo','porfavor','por favor','hola','buenas','buenos','dias','tardes','no'
+    ];
+
+    // Normalizar: quitar caracteres no alfanuméricos (mantener letras unicode) y split
+    const tokens = String(mensajeUsuario)
+      .toLowerCase()
+      .replace(/[^^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+
+    const candidatos = tokens.filter(t => !stopwords.includes(t));
+    const resultado = candidatos.length ? candidatos[0] : (tokens[0] || mensajeUsuario.toLowerCase());
+
+    console.log(`🔎 Palabra clave extraída (heurística): "${resultado}"`);
+    return resultado;
+  } catch (err) {
+    console.error('⚠️ Error en extraerPalabraClave:', err.message);
+    return mensajeUsuario.toLowerCase();
+  }
+}
 
 
 startServer();
+

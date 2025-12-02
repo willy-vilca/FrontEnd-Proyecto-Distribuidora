@@ -304,6 +304,36 @@ function notificacionCarrito(){
   mostrarNotificacion(`<i class='bi bi-check-circle'></i> Producto agregado al carrito`)
 }
 
+// Notificación exclusiva y sutil para acciones del chatbot
+function mostrarNotificacionChatbot(mensaje) {
+  let container = document.getElementById('notificaciones-chatbot');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'notificaciones-chatbot';
+    // Centrado horizontalmente, en la parte baja (pie) de la pantalla
+    container.style.cssText = 'position:fixed;left:50%;bottom:64px;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;align-items:center;z-index:10002;pointer-events:none;';
+    document.body.appendChild(container);
+  }
+
+  const notif = document.createElement('div');
+  notif.classList.add('notificacion-chatbot');
+  notif.style.cssText = 'background:#c60000;color:#fff;padding:10px 14px;border-radius:8px;font-size:14px;box-shadow:0 6px 18px rgba(0,0,0,0.12);opacity:0;transform:translateY(8px);transition:all .28s ease;pointer-events:auto;max-width:520px;min-width:240px;display:inline-flex;align-items:center;gap:12px;';
+  // Larger chatbot icon + bolder, slightly longer message text for visibility
+  notif.innerHTML = `
+    <span style="display:inline-flex;align-items:center;gap:12px;">
+      <svg width="28" height="28" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="flex:0 0 28px;">
+        <path d="M738.3 287.6H285.7c-59 0-106.8 47.8-106.8 106.8v303.1c0 59 47.8 106.8 106.8 106.8h81.5v111.1c0 .7.8 1.1 1.4.7l166.9-110.6 41.8-.8h117.4l43.6-.4c59 0 106.8-47.8 106.8-106.8V394.5c0-59-47.8-106.9-106.8-106.9z" fill="#fff"/>
+      </svg>
+      <span style="display:inline-block;vertical-align:middle;font-weight:700;">${mensaje}</span>
+    </span>`;
+
+  container.appendChild(notif);
+
+  // Mostrar y luego ocultar suavemente
+  setTimeout(() => { notif.style.opacity = '1'; notif.style.transform = 'translateY(0)'; }, 40);
+  setTimeout(() => { notif.style.opacity = '0'; notif.style.transform = 'translateY(6px)'; setTimeout(() => { try{ notif.remove(); }catch(e){} }, 300); }, 3000);
+}
+
 //funcionalidad del modal para mostrar datos del usuario
 document.addEventListener("DOMContentLoaded", () => {
 
