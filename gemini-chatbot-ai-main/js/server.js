@@ -181,7 +181,7 @@ app.post('/chat', async (req,res)=>{
 
                 // === Formatear los productos ===
                 catalogoTexto = productos.length > 0
-                  ? productos.map(p => `• ${p.nombre} – ${p.descripcion} – ${p.stock} – ${p.subcategoria} (S/ ${p.precio})`).join('\n')
+                  ? productos.map(p => `• ${p.nombre} – ${p.id_producto} – ${p.descripcion} – ${p.stock} – ${p.subcategoria} (S/ ${p.precio})`).join('\n')
                   : 'No se encontraron coincidencias exactas en el catálogo actual.';
 
 
@@ -200,11 +200,11 @@ app.post('/chat', async (req,res)=>{
                   Utiliza el nombre tal cual y el precio de cada producto.
                   No digas nada adicional solo enumera de la siguiente manera
 
-                  1. Nombre del producto – S/ precio
-                  2. Nombre del producto – S/ precio
-                  3. Nombre del producto – S/ precio
+                  1. Nombre del producto – S/ precio – id – stock
+                  2. Nombre del producto – S/ precio – id – stock
+                  3. Nombre del producto – S/ precio – id – stock
                   
-                  SOLO EL NOMBRE DEL PRODUCTO Y SU PRECIO NADA MAS, NO DESCRIPCION NI NADA EXTRA
+                  SOLO EL NOMBRE DEL PRODUCTO, SU PRECIO, SU ID Y SU STOCK NADA MAS, NO DESCRIPCION NI NADA EXTRA
 
                   ¿Cuál de estos productos te interesa o deseas más detalles sobre alguno en particular?
 
@@ -658,7 +658,7 @@ app.post('/chat', async (req,res)=>{
     try {
       // 1️⃣ Buscar producto en la base de datos
       const query = `
-        SELECT nombre, descripcion, precio
+        SELECT id_producto, nombre, descripcion, precio, stock
         FROM productos
         WHERE id_producto = $1;
       `;
@@ -670,6 +670,9 @@ app.post('/chat', async (req,res)=>{
       }
 
       const producto = result.rows[0];
+      // Normalizar campos para consistencia
+      producto.id = producto.id_producto;
+      producto.stock = typeof producto.stock !== 'undefined' ? Number(producto.stock) : null;
       console.log(`✅ Producto encontrado: ${producto.nombre} (S/ ${producto.precio})`);
 
       // 2️⃣ Crear prompt para que la IA genere un mensaje atractivo
@@ -683,6 +686,7 @@ app.post('/chat', async (req,res)=>{
   Nombre: ${producto.nombre}
   Descripción: ${producto.descripcion}
   Precio: S/ ${producto.precio}
+  Stock: ${producto.stock ?? 'N/A'}
 
   Reglas:
   - Usa tono natural, amigable y emocional.
@@ -738,7 +742,7 @@ async function sugerirProducto(model, client, mensajeCliente) {
         const palabra = await extraerPalabraClave(model, mensajeCliente);
         if (palabra) {
           const queryRel = `
-            SELECT id_producto, nombre, descripcion, precio
+            SELECT id_producto, nombre, descripcion, precio, stock
             FROM productos
             WHERE LOWER(nombre) LIKE LOWER($1)
               OR LOWER(descripcion) LIKE LOWER($1)
@@ -747,6 +751,8 @@ async function sugerirProducto(model, client, mensajeCliente) {
           const resRel = await client.query(queryRel, [`%${palabra}%`]);
           if (resRel.rows.length > 0) {
             producto = resRel.rows[0];
+            producto.id = producto.id_producto;
+            producto.stock = typeof producto.stock !== 'undefined' ? Number(producto.stock) : null;
             relatedFound = true;
             console.log(`🔎 Producto relacionado encontrado para "${palabra}": ${producto.nombre}`);
           }
@@ -763,7 +769,7 @@ async function sugerirProducto(model, client, mensajeCliente) {
         return 'Lo siento, no puedo acceder al catálogo ahora mismo para hacer una sugerencia.';
       }
       const query = `
-        SELECT id_producto, nombre, descripcion, precio
+        SELECT id_producto, nombre, descripcion, precio, stock
         FROM productos
         ORDER BY RANDOM()
         LIMIT 1;
@@ -774,6 +780,8 @@ async function sugerirProducto(model, client, mensajeCliente) {
         return "Lo siento, no tengo productos para recomendar en este momento.";
       }
       producto = result.rows[0];
+      producto.id = producto.id_producto;
+      producto.stock = typeof producto.stock !== 'undefined' ? Number(producto.stock) : null;
       console.log(`🎲 Producto aleatorio seleccionado: ${producto.nombre}`);
     }
 
@@ -790,7 +798,7 @@ async function sugerirProducto(model, client, mensajeCliente) {
       : `Eres un asistente de ventas formal y profesional y amable usa emojis . El usuario escribió algo no relacionado con la tienda: "${mensajeCliente}". Sugiere este producto de forma breve (2-3 oraciones), destacando por qué podría interesarle y animando a visitar el enlace. Mantén tono formal y profesional.`;
 
     // Incluir datos del producto en el prompt
-    const fullPrompt = `${promptRecom}\n\nProducto:\nNombre: ${producto.nombre}\nDescripcion: ${producto.descripcion || 'Sin descripción'}\nPrecio: S/ ${producto.precio}\nImagen: ${safeImage}\nLink: ${link}`;
+    const fullPrompt = `${promptRecom}\n\nProducto:\nID: ${producto.id_producto}\nNombre: ${producto.nombre}\nDescripcion: ${producto.descripcion || 'Sin descripción'}\nPrecio: S/ ${producto.precio}\nStock: ${producto.stock ?? 'N/A'}\nImagen: ${safeImage}\nLink: ${link}`;
 
     if (model) {
       try {
@@ -869,6 +877,38 @@ app.get('/product', async (req, res) => {
   } catch (err) {
     console.error('Error en /product:', err.message);
     return res.status(500).json({ error: 'Error interno al buscar producto' });
+  }
+});
+
+// Endpoint para obtener producto por id (GET /product/:id)
+app.get('/product/:id', async (req, res) => {
+  try {
+    const { id } = req.params || {};
+    if (!id) return res.status(400).json({ error: 'Falta parámetro "id" en la ruta' });
+    if (!clientConnected || !client) return res.status(503).json({ error: 'Base de datos no disponible' });
+
+    const query = `
+      SELECT id_producto, nombre, descripcion, precio, stock
+      FROM productos
+      WHERE id_producto = $1
+      LIMIT 1;
+    `;
+    const result = await client.query(query, [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Producto no encontrado' });
+
+    const row = result.rows[0];
+    const producto = {
+      id: row.id_producto,
+      nombre: row.nombre,
+      descripcion: row.descripcion,
+      precio: row.precio,
+      stock: typeof row.stock !== 'undefined' ? Number(row.stock) : null
+    };
+
+    return res.json({ product: producto });
+  } catch (err) {
+    console.error('Error en /product/:id:', err.message);
+    return res.status(500).json({ error: 'Error interno al buscar producto por id' });
   }
 });
 

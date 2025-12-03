@@ -65,7 +65,7 @@ function renderProductPage(storeId, page) {
         const encoded = encodeURIComponent((p.nombre||p.name||'').trim());
         const img = `${baseImg}${encoded}.jpg`;
         const displayPrice = String(p.precio||p.price||'0').replace(/\./g, ',');
-        const viewUrl = `https://willy-vilca.github.io/FrontEnd-Proyecto-Distribuidora/producto-info.html?name=${encoded}`;
+        const viewUrl = `https://willy-vilca.github.io/FrontEnd-Proyecto-Distribuidora/producto-info.html?id=${p.id}`;
         const pname = escapeHtml(p.nombre || p.name || '');
         const pprice = escapeHtml(displayPrice);
         const pid = escapeHtml(String(p.id || p.id_producto || ''));
@@ -81,8 +81,8 @@ function renderProductPage(storeId, page) {
                       <div class="product-price">S/ ${pprice}</div>
                   </div>
                   <div class="product-actions">
-                      <button type="button" class="product-view" data-id="${pid}" data-name="${pname}" data-price="${pprice}" data-desc="${pdesc}" data-stock="${pstock}" data-view-url="${viewUrl}">Ver</button>
-                      <button class="product-add" data-name="${pname}" data-price="${pprice}">Agregar</button>
+                                            <button type="button" class="product-view" data-id="${pid}" data-name="${pname}" data-price="${pprice}" data-desc="${pdesc}" data-stock="${pstock}" data-view-url="${viewUrl}">Ver</button>
+                                            <button class="product-add" data-name="${pname}" data-price="${pprice}" data-id="${pid}" data-stock="${pstock}">Agregar</button>
                   </div>
                 </div>
             </div>`;
@@ -432,19 +432,29 @@ function processMessageText(text) {
     // Detectar listas de productos y convertir a tarjetas
     const lines = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const productItems = [];
-    const itemRe = /^(?:\d+\.\s*|•\s*)(.+?)\s*[–-]\s*(?:S\/?\s*)?([0-9]+(?:[.,][0-9]{1,2})?)/i;
+    // Captura: nombre – S/ precio – id – stock
+    // Los grupos 3 y 4 (id, stock) son opcionales para tolerar variantes del formato.
+    const itemRe = /^(?:\d+\.\s*|•\s*)(.+?)\s*[–-]\s*(?:S\/?\s*)?([0-9]+(?:[.,][0-9]{1,2})?)(?:\s*[–-]\s*([^–-\s]+))?(?:\s*[–-]\s*([0-9]+))?/i;
     for (const ln of lines) {
         const m = ln.match(itemRe);
         if (m) {
-            const name = m[1].trim();
-            const price = m[2].trim();
-            productItems.push({ name, price });
+            const name = (m[1] || '').trim();
+            const price = (m[2] || '').trim();
+            const id = (m[3] || '').trim() || null;
+            const stockRaw = (m[4] || '').trim();
+            const stock = stockRaw !== '' ? (Number(stockRaw) || null) : null;
+            productItems.push({ name, price, id, stock });
         }
     }
 
     if (productItems.length > 0) {
         // Guardar items en store para paginación y devolver HTML paginado (3 por página)
-        const items = productItems.map(p => ({ nombre: p.name, precio: p.price }));
+        const items = productItems.map(p => ({
+            nombre: p.name || '',
+            precio: p.price || '',
+            id: p.id || null,
+            stock: typeof p.stock !== 'undefined' && p.stock !== null ? Number(p.stock) : null
+        }));
         const storeId = generateStoreId();
         productPaginationStore[storeId] = { items: items, currentPage: 1, totalPages: Math.max(1, Math.ceil(items.length / PRODUCTS_PAGE_SIZE)) };
         return renderProductsPaginatedHTML(items.length, storeId);
@@ -478,12 +488,14 @@ function attachProductCardListeners(root=document) {
             const name = btn.getAttribute('data-name');
             const price = btn.getAttribute('data-price');
             const id = btn.getAttribute('data-id') || null;
+            const stock = btn.getAttribute('data-stock') || null;
             const baseImg = 'https://backend-proyecto-distribuidora-production.up.railway.app/images/productos/';
             const encoded = encodeURIComponent((name||'').trim());
             const thumb = `${baseImg}${encoded}.jpg`;
 
             // Guardar intención de añadir al carrito y preguntar cantidad al usuario
-            pendingAdd = { name, price, id };
+            // Incluir stock si está disponible
+            pendingAdd = { name, price, id, stock };
 
             // Crear mensaje del asistente preguntando la cantidad con mini-imagen
             const botContent = `
