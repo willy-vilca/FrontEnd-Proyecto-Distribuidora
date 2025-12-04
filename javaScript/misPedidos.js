@@ -12,6 +12,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function fetchPedidos() {
+        //se verifica si el usuario esta logueado o no
+        if(usuarioActual.length == 0){
+            document.getElementById('botonMostrarMas').style.display= 'none';
+            const contenedor = document.getElementById("contenedorPedidos");
+            contenedor.innerHTML = "<p class='text-center'>Inicie Sesión para poder visualizar sus Pedidos.</p>";
+            return;
+        }
         try {
         const res = await fetch(`${API_BASE}/pedidos/usuario/${usuarioActual.userId}`);
         if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
@@ -290,7 +297,7 @@ async function generarComprobantePDF(nombre,dni,correo,fecha,total,idPedido) {
         qrContainer.style.display = "inline-block";
 
         new QRCode(qrContainer, {
-            text: "https://willy-vilca.github.io/proyecto-marcos-de-desarrollo-avance-3/misPedidos.html",
+            text: "https://willy-vilca.github.io/FrontEnd-Proyecto-Distribuidora/misPedidos.html",
             width: 128,
             height: 128,
             correctLevel: QRCode.CorrectLevel.H
