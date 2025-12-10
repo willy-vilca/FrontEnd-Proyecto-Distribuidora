@@ -199,7 +199,7 @@ formPedido.addEventListener('submit', function(event) {
       setTimeout(function() {
         Culqi.close();
         realizarPedido();
-      }, 8000)
+      }, 20000)
     }
   }
 
