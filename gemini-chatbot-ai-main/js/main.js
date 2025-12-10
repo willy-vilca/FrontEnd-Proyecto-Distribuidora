@@ -93,7 +93,8 @@ function renderProductPage(storeId, page) {
     const prevBtn = document.querySelector(`.prod-prev[data-store-id="${storeId}"]`);
     const nextBtn = document.querySelector(`.prod-next[data-store-id="${storeId}"]`);
 
-    if (container) container.innerHTML = `<div class="product-grid">${cards}</div>`;
+    const helpMsg = `<div class="product-help-msg" style="opacity:0.75;font-size:13px;margin-top:10px;text-align:center;color:#333;">¿Deseas más información de alguno de estos productos? ¡Hazmelo saber!</div>`;
+    if (container) container.innerHTML = `<div class="product-grid">${cards}</div>${helpMsg}`;
     if (pageInfo) pageInfo.textContent = `${current}/${totalPages}`;
     if (prevBtn) prevBtn.disabled = current <= 1;
     if (nextBtn) nextBtn.disabled = current >= totalPages;
@@ -366,8 +367,16 @@ function showChatCart(){
                         return;
                 }
                 if (btn.classList.contains('chatcart-checkout')){
-                        window.location.href = 'finalizarPedido.html';
-                        return;
+                    try{
+                        const items = chatCartStore[storeId] || [];
+                        const total = items.reduce((s,i)=> s + (Number(i.precio||0) * Number(i.cantidad||1)), 0);
+                        if (Number(total) < 100) {
+                            showMinPurchaseModal(100);
+                            return;
+                        }
+                    }catch(err){ console.warn('checkout validation error', err); }
+                    window.location.href = 'finalizarPedido.html';
+                    return;
                 }
         });
 
@@ -396,6 +405,110 @@ function updateChatCartTotals(storeId){
         if (header) header.innerHTML = `🧾 <strong>Tu carrito (chat)</strong> — ${totalCount} unidades`;
         const tval = document.querySelector(`.chat-cart-footer[data-store-id="${storeId}"] .chat-cart-total-val`);
         if (tval) tval.textContent = totalPrice;
+}
+
+// Mostrar modal simple indicando monto mínimo de compra
+function showMinPurchaseModal(minAmount){
+    try{
+        // evitar duplicados
+        const existing = document.querySelector('.chatbot-min-purchase-modal');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'chatbot-min-purchase-modal';
+        overlay.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10010;padding:16px;';
+
+        const box = document.createElement('div');
+        box.style = 'width:100%;max-width:460px;background:#fff;border-radius:10px;padding:0;box-shadow:0 8px 30px rgba(0,0,0,0.2);text-align:center;color:#222;overflow:hidden;';
+        // Cabecera con color del sitio y botón de cerrar resaltado; texto centrado
+        box.innerHTML = `
+            <div style="background: rgb(228,30,30); padding:14px 16px; color:#fff; text-align:center;">
+                <div style="font-size:16px;font-weight:700;margin:0;">Monto mínimo no alcanzado</div>
+            </div>
+            <div style="padding:18px;color:#222;">
+                <p style="margin:0 0 12px;font-size:14px;">El monto mínimo de compra es de <strong>S/ ${Number(minAmount).toFixed(2)}</strong>. Añade más productos para continuar con el pago.</p>
+                <div style="display:flex;gap:8px;justify-content:center;margin-top:8px;">
+                    <button class="chatbot-min-close" style="padding:8px 12px;border-radius:6px;border:none;background:rgb(228,30,30);color:#fff;cursor:pointer;">Cerrar</button>
+                </div>
+            </div>`;
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        // Cerrar al clicar fuera o en el botón
+        overlay.addEventListener('click', (ev)=>{ if (ev.target === overlay) overlay.remove(); });
+        const btn = box.querySelector('.chatbot-min-close');
+        if (btn) btn.addEventListener('click', ()=> overlay.remove());
+    }catch(e){ console.warn('showMinPurchaseModal error', e); }
+}
+
+// Mostrar modal indicando límite de stock y opciones (Agregar disponible / Cerrar)
+function showStockLimitModal({ name, available, onAdd, onClose }){
+    try{
+        const existing = document.querySelector('.chatbot-stock-limit-modal');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'chatbot-stock-limit-modal';
+        overlay.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10020;padding:16px;';
+
+        const box = document.createElement('div');
+        box.style = 'width:100%;max-width:520px;background:#fff;border-radius:10px;padding:0;box-shadow:0 8px 30px rgba(0,0,0,0.2);text-align:center;color:#222;overflow:hidden;';
+        box.innerHTML = `
+            <div style="background: rgb(228,30,30); padding:14px 16px; color:#fff; text-align:center;">
+                <div style="font-size:16px;font-weight:700;margin:0;">Stock insuficiente</div>
+            </div>
+            <div style="padding:18px;color:#222;">
+                <p style="margin:0 0 12px;font-size:14px;">Lo sentimos — solo hay <strong>${Number(available)}</strong> unidad(es) disponibles de <strong>${escapeHtml(name)}</strong>.</p>
+                <p style="margin:0 0 12px;font-size:13px;color:#555;">¿Deseas agregar las unidades disponibles igualmente?</p>
+                <div style="display:flex;gap:8px;justify-content:center;margin-top:8px;">
+                    <button class="chatbot-stock-add" style="padding:8px 12px;border-radius:6px;border:none;background:rgb(228,30,30);color:#fff;cursor:pointer;">Agregar ${Number(available)}</button>
+                    <button class="chatbot-stock-close" style="padding:8px 12px;border-radius:6px;border:1px solid #ccc;background:#fff;cursor:pointer;">Cerrar</button>
+                </div>
+            </div>`;
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', (ev)=>{ if (ev.target === overlay) overlay.remove(); });
+
+        const addBtn = box.querySelector('.chatbot-stock-add');
+        const closeBtn = box.querySelector('.chatbot-stock-close');
+        if (addBtn) addBtn.addEventListener('click', ()=>{ try{ if (typeof onAdd === 'function') onAdd(); }catch(e){} overlay.remove(); });
+        if (closeBtn) closeBtn.addEventListener('click', ()=>{ try{ if (typeof onClose === 'function') onClose(); }catch(e){} overlay.remove(); });
+    }catch(e){ console.warn('showStockLimitModal error', e); }
+}
+
+// Mostrar modal cuando el stock ya está completamente en el carrito del usuario
+function showAlreadyInCartModal(name){
+    try{
+        const existing = document.querySelector('.chatbot-stock-incart-modal');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'chatbot-stock-incart-modal';
+        overlay.style = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10030;padding:16px;';
+
+        const box = document.createElement('div');
+        box.style = 'width:100%;max-width:520px;background:#fff;border-radius:10px;padding:0;box-shadow:0 8px 30px rgba(0,0,0,0.2);text-align:center;color:#222;overflow:hidden;';
+        box.innerHTML = `
+            <div style="background: rgb(228,30,30); padding:14px 16px; color:#fff; text-align:center;">
+                <div style="font-size:16px;font-weight:700;margin:0;">Stock en tu pedido</div>
+            </div>
+            <div style="padding:18px;color:#222;">
+                <p style="margin:0 0 12px;font-size:14px;">El stock disponible del producto ya está en tu pedido. No tenemos más unidades disponibles.</p>
+                <div style="display:flex;gap:8px;justify-content:center;margin-top:8px;">
+                    <button class="chatbot-stock-incart-close" style="padding:8px 12px;border-radius:6px;border:none;background:rgb(228,30,30);color:#fff;cursor:pointer;">Cerrar</button>
+                </div>
+            </div>`;
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', (ev)=>{ if (ev.target === overlay) overlay.remove(); });
+        const closeBtn = box.querySelector('.chatbot-stock-incart-close');
+        if (closeBtn) closeBtn.addEventListener('click', ()=> overlay.remove());
+    }catch(e){ console.warn('showAlreadyInCartModal error', e); }
 }
 
 // Hook: detectar cuando el usuario escribe solicitando ver el carrito
@@ -661,8 +774,67 @@ function showProductDetail({ name, price, viewUrl, descripcion, stock, id }){
 
         addBtn.addEventListener('click', ()=>{
             const qty = Number(qtyCount.textContent||1);
+            // Si el carrito ya contiene todo el stock disponible, mostrar modal informativo
+            try {
+                let carrito = [];
+                if (typeof getCarrito === 'function') carrito = getCarrito() || [];
+                else carrito = JSON.parse(localStorage.getItem('carrito') || '[]');
+
+                let prodIdCandidate = null;
+                if (id) {
+                    const asNum = Number(id);
+                    prodIdCandidate = Number.isFinite(asNum) && asNum > 0 ? asNum : null;
+                }
+
+                const existingInCart = carrito.find(p => (prodIdCandidate !== null && p.id === prodIdCandidate) || String(p.nombre) === String(name));
+                if (existingInCart && maxStock !== Infinity && Number(existingInCart.cantidad || existingInCart.qty || 0) >= Number(maxStock)) {
+                    showAlreadyInCartModal(name);
+                    return;
+                }
+            } catch (e) { console.warn('check existing in cart error', e); }
             if (qty > maxStock) {
-                alert('No puedes pedir más que el stock disponible.');
+                // Mostrar modal con opción para agregar el stock disponible
+                showStockLimitModal({
+                    name: name || 'Producto',
+                    available: maxStock,
+                    onAdd: () => {
+                        // Añadir maxStock unidades al carrito (reusar la lógica de añadir)
+                        try {
+                            let carrito = [];
+                            if (typeof getCarrito === 'function') carrito = getCarrito() || [];
+                            else carrito = JSON.parse(localStorage.getItem('carrito') || '[]');
+
+                            let prodId = null;
+                            if (id) {
+                                const asNum = Number(id);
+                                prodId = Number.isFinite(asNum) && asNum > 0 ? asNum : Date.now();
+                            } else prodId = Date.now();
+
+                            let precioNum = 0;
+                            try { precioNum = parseFloat(String(price || '').replace(/\s/g,'').replace(',','.').replace(/[^0-9.\-]/g,'')) || 0; } catch(e){ precioNum = 0; }
+
+                            const nombre = name || 'Producto';
+                            const cantidad = Number(maxStock);
+
+                            let existing = carrito.find(p => p.id === prodId || String(p.nombre) === String(nombre));
+                            if (existing) {
+                                existing.cantidad = (existing.cantidad || existing.qty || 0) + cantidad;
+                                existing.precio = existing.precio || existing.price || precioNum;
+                            } else {
+                                carrito.push({ id: prodId, nombre: nombre, precio: precioNum, cantidad: cantidad, stock: maxStock });
+                            }
+
+                            if (typeof saveCarrito === 'function') saveCarrito(carrito);
+                            else localStorage.setItem('carrito', JSON.stringify(carrito));
+                            try { if (typeof actualizarBotonCarrito === 'function') actualizarBotonCarrito(); } catch(e){}
+                            try { if (typeof actualizarBotonFlotanteCarrito === 'function') actualizarBotonFlotanteCarrito(); } catch(e){}
+                            try { if (typeof mostrarNotificacionChatbot === 'function') mostrarNotificacionChatbot(`Se han agregado ${cantidad} unidad(es) de ${nombre} al carrito.`); } catch(e){}
+                        } catch (err) { console.warn('Error al agregar stock disponible desde modal', err); }
+                    },
+                    onClose: ()=>{
+                        // nothing, remain in product detail modal
+                    }
+                });
                 return;
             }
 
@@ -993,6 +1165,75 @@ const handleOutgoingMessage = (e) => {
         const qtyStr = String(userData.message || '').trim();
         const qtyNum = Number(qtyStr);
         if (/^\d+$/.test(qtyStr) && qtyNum > 0) {
+            // Antes de añadir, comprobar stock si está disponible
+            const stockRaw = typeof pendingAdd.stock !== 'undefined' ? pendingAdd.stock : null;
+            const stockNum = stockRaw === null || stockRaw === '' ? null : Number(stockRaw);
+            // Si el carrito ya contiene todo el stock disponible, mostrar modal informativo y limpiar pendingAdd
+            try {
+                let carrito = [];
+                if (typeof getCarrito === 'function') carrito = getCarrito() || [];
+                else carrito = JSON.parse(localStorage.getItem('carrito') || '[]');
+
+                let prodId = null;
+                if (pendingAdd.id) {
+                    const asNum = Number(pendingAdd.id);
+                    prodId = Number.isFinite(asNum) && asNum > 0 ? asNum : null;
+                }
+
+                const existing = carrito.find(p => (prodId !== null && p.id === prodId) || String(p.nombre) === String(pendingAdd.name));
+                if (existing && stockNum !== null && !Number.isNaN(stockNum) && Number(existing.cantidad || existing.qty || 0) >= Number(stockNum)) {
+                    showAlreadyInCartModal(pendingAdd.name || 'Producto');
+                    pendingAdd = null;
+                    return;
+                }
+            } catch (e) { console.warn('check existing in cart pendingAdd error', e); }
+            if (stockNum !== null && !Number.isNaN(stockNum) && stockNum >= 0 && qtyNum > stockNum) {
+                // mostrar modal con opción de agregar la cantidad disponible
+                showStockLimitModal({
+                    name: pendingAdd.name || 'Producto',
+                    available: stockNum,
+                    onAdd: () => {
+                        try {
+                            // Añadir la cantidad disponible
+                            let carrito = [];
+                            if (typeof getCarrito === 'function') carrito = getCarrito() || [];
+                            else carrito = JSON.parse(localStorage.getItem('carrito') || '[]');
+
+                            let prodId = null;
+                            if (pendingAdd.id) {
+                                const asNum = Number(pendingAdd.id);
+                                prodId = Number.isFinite(asNum) && asNum > 0 ? asNum : Date.now();
+                            } else prodId = Date.now();
+
+                            let precioNum = 0;
+                            try { precioNum = parseFloat(String(pendingAdd.price || '').replace(/\s/g,'').replace(',','.').replace(/[^0-9.\-]/g,'')) || 0; } catch(e){ precioNum = 0; }
+
+                            const nombre = pendingAdd.name || 'Producto';
+                            const cantidad = Number(stockNum);
+
+                            let existing = carrito.find(p => p.id === prodId || String(p.nombre) === String(nombre));
+                            if (existing) {
+                                existing.cantidad = (existing.cantidad || existing.qty || 0) + cantidad;
+                                existing.precio = existing.precio || existing.price || precioNum;
+                            } else {
+                                carrito.push({ id: prodId, nombre: nombre, precio: precioNum, cantidad: cantidad, stock: stockNum });
+                            }
+
+                            if (typeof saveCarrito === 'function') saveCarrito(carrito);
+                            else localStorage.setItem('carrito', JSON.stringify(carrito));
+                            try { if (typeof actualizarBotonCarrito === 'function') actualizarBotonCarrito(); } catch(e){}
+                            try { if (typeof actualizarBotonFlotanteCarrito === 'function') actualizarBotonFlotanteCarrito(); } catch(e){}
+                            try { if (typeof mostrarNotificacionChatbot === 'function') mostrarNotificacionChatbot(`Se han agregado ${cantidad} unidad(es) de ${nombre} al carrito.`); } catch(e){}
+                        } catch (err) { console.warn('Error al agregar stock disponible', err); }
+                        pendingAdd = null;
+                    },
+                    onClose: () => {
+                        // no limpiar pendingAdd para permitir reintento manual
+                    }
+                });
+                return;
+            }
+
             // Añadir al carrito del sitio (integración con `funcionalidades.js`)
             try {
                 // Obtener carrito existente usando la API global si existe

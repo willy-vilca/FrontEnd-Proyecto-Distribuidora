@@ -127,7 +127,7 @@ formPedido.addEventListener('submit', function(event) {
   event.preventDefault();
   //validamos que la compra sea mayor a S/100
   if(totalPedidoCompra<100){
-    mostrarModal('¡Monto Mínimo no Alcanzado!','El monto mínimo de compra en línea es de S/.300, agregue más productos por favor.');
+    mostrarModal('¡Monto Mínimo no Alcanzado!','El monto mínimo de compra en línea es de S/.100, agregue más productos por favor.');
     return;
   }
 
